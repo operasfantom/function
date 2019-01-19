@@ -28,6 +28,14 @@ class function<R(Args...)> {
         R operator()(Args &&... args)/* const */override {
             return f(std::forward<Args>(args)...);
         }
+
+        template<typename U = F>
+        typename std::enable_if_t<std::is_trivially_destructible_v<U>> destruct() {}
+
+        template<typename U = F>
+        typename std::enable_if_t<!std::is_trivially_destructible_v<U>> destruct() {
+            f.~U();
+        }
     };
 
     using word_t = std::byte;
@@ -110,7 +118,9 @@ function<R(Args...)>::function(F &&f) {
     if (sizeof(std::decay_t<F>) * 2 <= FIXED_SIZE) {
         auto model_ptr = new(reinterpret_cast<model_t *>(data.data())) model_t(std::forward<F>(f));
         offset = model_ptr - reinterpret_cast<model_t *>(data.data());
-        ptr = std::shared_ptr<model_t>(model_ptr, [](model_t *) {});
+        ptr = std::shared_ptr<model_t>(model_ptr, [](model_t *ptr) {
+            ptr->destruct();
+        });
 
         small = true;
     } else {
