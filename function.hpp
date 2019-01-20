@@ -3,55 +3,76 @@
 
 #include <cstddef>
 #include <memory>
-#include <variant>
 #include <vector>
 #include <iostream>
+#include <type_traits>
 
 template<typename T>
 class function;
 
 template<typename R, typename... Args>
 class function<R(Args...)> {
+    using word_t = std::byte;
+    using pointer_t = word_t *;
+
     class concept {
     public:
         virtual ~concept() = default;
 
         virtual R operator()(Args &&...args)/* const */= 0;
+
+        virtual pointer_t copy(pointer_t) = 0;
+
+        virtual pointer_t move(pointer_t) = 0;
     };
 
     template<typename F>
     class model : public concept {
         F f;
     public:
-        explicit model(F &&f) : f(std::forward<F>(f)) {}
+        explicit model(F f) : f(std::forward<F>(f)) {}
 
-        R operator()(Args &&... args)/* const */override {
-            return f(std::forward<Args>(args)...);
-        }
+        R operator()(Args &&... args)/* const */override;
 
-        template<typename U = F>
-        typename std::enable_if_t<std::is_trivially_destructible_v<U>> destruct() {}
+        pointer_t copy(pointer_t destination) override;
 
-        template<typename U = F>
-        typename std::enable_if_t<!std::is_trivially_destructible_v<U>> destruct() {
-            f.~U();
-        }
+        pointer_t move(pointer_t pointer) override;
     };
 
-    using word_t = std::byte;
 
-    constexpr static size_t FIXED_SIZE = 16;
+    template<typename F>
+    static std::enable_if_t<!std::is_copy_constructible_v<F>, pointer_t> copy_model(F const &f, pointer_t destination) {
+        return nullptr;
+    }
+
+    template<typename F>
+    static std::enable_if_t<std::is_copy_constructible_v<F>, pointer_t> copy_model(F const &f, pointer_t destination) {
+        return reinterpret_cast<pointer_t >(::new(reinterpret_cast<model<F> *>(destination)) model<F>(f));
+    }
+
+    template<typename F>
+    static std::enable_if_t<!std::is_move_constructible_v<F>, pointer_t> move_model(F &&f, pointer_t destination) {
+        return nullptr;
+    }
+
+    template<typename F>
+    static std::enable_if_t<std::is_move_constructible_v<F>, pointer_t> move_model(F &&f, pointer_t destination) {
+        return reinterpret_cast<pointer_t >(::new(reinterpret_cast<model<F> *>(destination)) model<F>(std::move(f)));
+    }
+
+
+    constexpr static size_t FIXED_SIZE = 32;
 
     std::array<word_t, FIXED_SIZE> data;
     size_t offset = 0;
 
-    std::shared_ptr<concept> ptr;
+    std::shared_ptr<concept> shared_ptr;
+    concept *ptr = nullptr;
 
     bool small = false;
 
     void set_pointer_to_data() {
-        auto concept_ptr = reinterpret_cast<concept *>(data.data() + offset);
-        ptr = std::shared_ptr<concept>(concept_ptr, [](concept *) {});
+        ptr = reinterpret_cast<concept *>(data.data() + offset);
     }
 
 public:
@@ -83,6 +104,24 @@ public:
 };
 
 template<typename R, typename... Args>
+template<typename F>
+R function<R(Args...)>::model<F>::operator()(Args &&... args) {
+    return f(std::forward<Args>(args)...);
+}
+
+template<typename R, typename... Args>
+template<typename F>
+std::byte *function<R(Args...)>::model<F>::copy(std::byte *destination) {
+    return copy_model<F>(f, destination);
+}
+
+template<typename R, typename... Args>
+template<typename F>
+std::byte *function<R(Args...)>::model<F>::move(std::byte *destination) {
+    return move_model<std::decay_t<F>>(std::move(f), destination);
+}
+
+template<typename R, typename... Args>
 function<R(Args...)>::function() noexcept {
 
 }
@@ -93,20 +132,24 @@ function<R(Args...)>::function(std::nullptr_t) noexcept {
 }
 
 template<typename R, typename... Args>
-function<R(Args...)>::function(function const &other) : data(other.data), offset(other.offset), small(other.small) {
+function<R(Args...)>::function(function const &other) : offset(other.offset), small(other.small) {
     if (small) {
+        other.ptr->copy(data.data());
         this->set_pointer_to_data();
     } else {
-        ptr = other.ptr;
+        shared_ptr = other.shared_ptr;
+        ptr = shared_ptr.get();
     }
 }
 
 template<typename R, typename... Args>
-function<R(Args...)>::function(function &&other) noexcept : data(std::move(other.data)), offset(other.offset), small(other.small) {
+function<R(Args...)>::function(function &&other) noexcept : offset(other.offset), small(other.small) {
     if (small) {
+        other.ptr->move(data.data());
         this->set_pointer_to_data();
     } else {
-        ptr = std::move(other.ptr);
+        shared_ptr = std::move(other.shared_ptr);
+        ptr = shared_ptr.get();
     }
 }
 
@@ -118,13 +161,15 @@ function<R(Args...)>::function(F &&f) {
     if (sizeof(std::decay_t<F>) * 2 <= FIXED_SIZE) {
         auto model_ptr = new(reinterpret_cast<model_t *>(data.data())) model_t(std::forward<F>(f));
         offset = model_ptr - reinterpret_cast<model_t *>(data.data());
-        ptr = std::shared_ptr<model_t>(model_ptr, [](model_t *ptr) {
+        ptr = model_ptr;
+        /*shared_ptr = std::shared_ptr<model_t>(model_ptr, [](model_t *ptr) {
             ptr->destruct();
-        });
+        });*/
 
         small = true;
     } else {
-        ptr = std::make_shared<model_t>(std::forward<F>(f));
+        shared_ptr = std::make_shared<model_t>(std::forward<F>(f));
+        ptr = shared_ptr.get();
 
         small = false;
     }
@@ -132,7 +177,9 @@ function<R(Args...)>::function(F &&f) {
 
 template<typename R, typename... Args>
 function<R(Args...)>::~function() {
-
+    if (small) {
+        ptr->~concept();
+    }
 }
 
 template<typename R, typename... Args>
@@ -153,6 +200,7 @@ template<typename R, typename... Args>
 void function<R(Args...)>::swap(function &other) noexcept {
     std::swap(data, other.data);
     std::swap(offset, other.offset);
+    std::swap(shared_ptr, other.shared_ptr);
     std::swap(ptr, other.ptr);
     std::swap(small, other.small);
 
@@ -166,7 +214,7 @@ void function<R(Args...)>::swap(function &other) noexcept {
 
 template<typename R, typename... Args>
 function<R(Args...)>::operator bool() const noexcept {
-    return ptr.get() != nullptr;
+    return ptr != nullptr;
 }
 
 #endif
