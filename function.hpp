@@ -27,7 +27,9 @@ class function<R(Args...)> {
     class model : public concept {
         F f;
     public:
-        explicit model(F f) : f(std::forward<F>(f)) {}
+        explicit model(F const &f) : f(f) {}
+
+        explicit model(F &&f) : f(std::forward<F>(f)) {}
 
         R operator()(Args &&... args)/* const */override;
 
@@ -165,7 +167,7 @@ function<R(Args...)>::function(function &&other) noexcept : offset(other.offset)
 template<typename R, typename... Args>
 template<typename F>
 function<R(Args...)>::function(F &&f) {
-    using model_t = function::model<F>;
+    using model_t = function::model<std::decay_t<F>>;
     if (sizeof(std::decay_t<F>) * 2 <= FIXED_SIZE) {
         ptr = ::new(reinterpret_cast<model_t *>(data.data())) model_t(std::forward<F>(f));
         offset = static_cast<size_t>(std::distance(data.data(), reinterpret_cast<std::byte *>(ptr)));
