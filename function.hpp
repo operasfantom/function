@@ -39,20 +39,20 @@ class function<R(Args...)> {
     };
 
 
-    template<typename F>
+    /*template<typename F>
     static std::enable_if_t<!std::is_copy_constructible_v<F>, concept *> copy_model(F const &f, std::byte *destination) {
         return nullptr;
-    }
+    }*/
 
     template<typename F>
     static std::enable_if_t<std::is_copy_constructible_v<F>, concept *> copy_model(F const &f, std::byte *destination) {
         return static_cast<concept *>(::new(reinterpret_cast<model<F> *>(destination)) model<F>(f));
     }
 
-    template<typename F>
+    /*template<typename F>
     static std::enable_if_t<!std::is_move_constructible_v<F>, concept *> move_model(F &&f, std::byte *destination) {
         return nullptr;
-    }
+    }*/
 
     template<typename F>
     static std::enable_if_t<std::is_move_constructible_v<F>, concept *> move_model(F &&f, std::byte *destination) {
@@ -67,8 +67,6 @@ class function<R(Args...)> {
 
     std::shared_ptr<concept> shared_ptr;
     concept *ptr = nullptr;
-
-//    bool small = false;
 
     void reset_pointer() {
         if (is_small()) {
@@ -98,7 +96,7 @@ public:
     function(function &&other) noexcept;
 
     template<typename F>
-    function(F &&f);
+    function(F f);
 
     ~function();
 
@@ -110,10 +108,7 @@ public:
 
     explicit operator bool() const noexcept;
 
-    template<typename... Params>
-    R operator()(Params &&... params) const {
-        return ptr->operator()(std::forward<Params>(params)...);
-    }
+    R operator()(Args &&... args) const;
 };
 
 template<typename R, typename... Args>
@@ -146,55 +141,63 @@ function<R(Args...)>::function(std::nullptr_t) noexcept {
 
 template<typename R, typename... Args>
 function<R(Args...)>::function(function const &other) : offset(other.offset) {
-    if (other.is_small()) {
-        ptr = other.ptr->copy(data.data());
-    } else {
-        shared_ptr = other.shared_ptr;
-        ptr = shared_ptr.get();
+    if (other.has_value()) {
+        if (other.is_small()) {
+            ptr = other.ptr->copy(data.data());
+        } else {
+            shared_ptr = other.shared_ptr;
+            ptr = shared_ptr.get();
+        }
     }
 }
 
 template<typename R, typename... Args>
 function<R(Args...)>::function(function &&other) noexcept : offset(other.offset) {
-    if (other.is_small()) {
-        ptr = other.ptr->move(data.data());
-    } else {
-        shared_ptr = std::move(other.shared_ptr);
-        ptr = shared_ptr.get();
+    if (other.has_value()) {
+        if (other.is_small()) {
+            ptr = other.ptr->move(data.data());
+        } else {
+            shared_ptr = std::move(other.shared_ptr);
+            ptr = shared_ptr.get();
+        }
     }
 }
 
 template<typename R, typename... Args>
 template<typename F>
-function<R(Args...)>::function(F &&f) {
-    using model_t = model<std::decay_t<F>>;
+function<R(Args...)>::function(F f) {
+    using model_t = model<F>;
     if (sizeof(std::decay_t<F>) * 2 <= FIXED_SIZE) {
-        ptr = ::new(reinterpret_cast<model_t *>(data.data())) model_t(std::forward<F>(f));
+        ptr = ::new(reinterpret_cast<model_t *>(data.data())) model_t(std::move(f));
         offset = static_cast<size_t>(std::distance(data.data(), reinterpret_cast<std::byte *>(ptr)));
     } else {
-        shared_ptr = std::make_shared<model_t>(std::forward<F>(f));
+        shared_ptr = std::make_shared<model_t>(std::move(f));
         ptr = shared_ptr.get();
     }
 }
 
 template<typename R, typename... Args>
 function<R(Args...)>::~function() {
-    if (is_small() && has_value()) {
+    if (has_value() && is_small()) {
         ptr->~concept();
     }
 }
 
 template<typename R, typename... Args>
 function<R(Args...)> &function<R(Args...)>::operator=(const function &other) {
-    auto tmp(other);
-    swap(tmp);
+    if (other.has_value()) {
+        auto tmp(other);
+        swap(tmp);
+    }
     return *this;
 }
 
 template<typename R, typename... Args>
 function<R(Args...)> &function<R(Args...)>::operator=(function &&other) noexcept {
-    auto tmp(std::move(other));
-    swap(tmp);
+    if (other.has_value()) {
+        auto tmp(std::move(other));
+        swap(tmp);
+    }
     return *this;
 }
 
@@ -212,6 +215,11 @@ void function<R(Args...)>::swap(function &other) noexcept {
 template<typename R, typename... Args>
 function<R(Args...)>::operator bool() const noexcept {
     return has_value();
+}
+
+template<typename R, typename... Args>
+R function<R(Args...)>::operator()(Args &&... args) const {
+    return ptr->operator()(std::forward<Args>(args)...);
 }
 
 #endif
