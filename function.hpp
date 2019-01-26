@@ -6,6 +6,7 @@
 #include <vector>
 #include <iostream>
 #include <type_traits>
+#include <functional>
 
 template<typename T>
 class function;
@@ -221,6 +222,9 @@ function<R(Args...)>::operator bool() const noexcept {
 
 template<typename R, typename... Args>
 R function<R(Args...)>::operator()(Args &&... args) const {
+    if (!has_value()) {
+        throw std::bad_function_call();
+    }
     return ptr->operator()(std::forward<Args>(args)...);
 }
 
