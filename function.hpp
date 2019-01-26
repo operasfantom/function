@@ -7,6 +7,7 @@
 #include <iostream>
 #include <type_traits>
 #include <functional>
+#include <variant>
 
 template<typename T>
 class function;
@@ -63,18 +64,19 @@ class function<R(Args...)> {
 
     constexpr static size_t FIXED_SIZE = 32;
 
-    alignas(FIXED_SIZE) mutable std::array<std::byte, FIXED_SIZE> data;
+    using array_t = std::array<std::byte, FIXED_SIZE>;
+    using pointer_t = std::shared_ptr<concept>;
 
-    std::shared_ptr<concept> shared_ptr;
+    std::variant<array_t, pointer_t> variant;
     concept *ptr = nullptr;
 
     void reset_pointer() {
         if (is_small()) {
             if (ptr) {
-                ptr = reinterpret_cast<concept *>(data.data());
+                ptr = reinterpret_cast<concept *>(std::get<array_t>(variant).data());
             }
         } else {
-            ptr = shared_ptr.get();
+            ptr = std::get<pointer_t>(variant).get();
         }
     }
 
@@ -83,7 +85,7 @@ class function<R(Args...)> {
     }
 
     bool is_small() const {
-        return shared_ptr == nullptr;
+        return !std::holds_alternative<pointer_t>(variant);
     }
 
 public:
@@ -143,10 +145,10 @@ template<typename R, typename... Args>
 function<R(Args...)>::function(function const &other) {
     if (other.has_value()) {
         if (other.is_small()) {
-            ptr = other.ptr->copy(data.data());
+            ptr = other.ptr->copy(std::get<array_t>(variant).data());
         } else {
-            shared_ptr = other.shared_ptr;
-            ptr = shared_ptr.get();
+            variant = other.variant;
+            ptr = std::get<pointer_t>(variant).get();
         }
     }
 }
@@ -155,10 +157,10 @@ template<typename R, typename... Args>
 function<R(Args...)>::function(function &&other) noexcept {
     if (other.has_value()) {
         if (other.is_small()) {
-            ptr = other.ptr->move(data.data());
+            ptr = other.ptr->move(std::get<array_t>(variant).data());
         } else {
-            shared_ptr = std::move(other.shared_ptr);
-            ptr = shared_ptr.get();
+            variant = std::move(other.variant);
+            ptr = std::get<pointer_t>(variant).get();
         }
     }
 }
@@ -168,11 +170,10 @@ template<typename F>
 function<R(Args...)>::function(F f) {
     using model_t = model<F>;
     if (sizeof(std::decay_t<F>) * 2 <= FIXED_SIZE) {
-        ptr = ::new(reinterpret_cast<model_t *>(data.data())) model_t(std::move(f));
-        static_cast<size_t>(std::distance(data.data(), reinterpret_cast<std::byte *>(ptr)));
+        ptr = ::new(reinterpret_cast<model_t *>(std::get<array_t>(variant).data())) model_t(std::move(f));
     } else {
-        shared_ptr = std::make_shared<model_t>(std::move(f));
-        ptr = shared_ptr.get();
+        variant = std::make_shared<model_t>(std::move(f));
+        ptr = std::get<pointer_t>(variant).get();
     }
 }
 
@@ -203,8 +204,7 @@ function<R(Args...)> &function<R(Args...)>::operator=(function &&other) noexcept
 
 template<typename R, typename... Args>
 void function<R(Args...)>::swap(function &other) noexcept {
-    std::swap(data, other.data);
-    std::swap(shared_ptr, other.shared_ptr);
+    std::swap(variant, other.variant);
     std::swap(ptr, other.ptr);
 
     this->reset_pointer();
