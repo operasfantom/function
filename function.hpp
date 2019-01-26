@@ -186,26 +186,53 @@ function<R(Args...)>::~function() {
 
 template<typename R, typename... Args>
 function<R(Args...)> &function<R(Args...)>::operator=(const function &other) {
+    if (this->has_value()) {
+        if (this->is_small()) {
+            reinterpret_cast<concept *>(std::get<array_t>(variant).data())->~concept();
+        } else {
+            variant = nullptr;
+        }
+    }
+    ptr = nullptr;
     if (other.has_value()) {
-        auto tmp(other);
-        swap(tmp);
+        if (other.is_small()) {
+            variant = array_t();
+            ptr = other.ptr->copy(std::get<array_t>(variant).data());
+        } else {
+            variant = std::get<pointer_t>(other.variant);
+            ptr = std::get<pointer_t>(variant).get();
+        }
     }
     return *this;
 }
 
 template<typename R, typename... Args>
 function<R(Args...)> &function<R(Args...)>::operator=(function &&other) noexcept {
+    if (this->has_value()) {
+        if (this->is_small()) {
+            reinterpret_cast<concept *>(std::get<array_t>(variant).data())->~concept();
+        } else {
+            variant = nullptr;
+        }
+    }
+    ptr = nullptr;
     if (other.has_value()) {
-        auto tmp(std::move(other));
-        swap(tmp);
+        if (other.is_small()) {
+            variant = array_t();
+            ptr = other.ptr->move(std::get<array_t>(variant).data());
+        } else {
+            variant = std::get<pointer_t>(other.variant);
+            ptr = std::get<pointer_t>(variant).get();
+        }
     }
     return *this;
 }
 
 template<typename R, typename... Args>
 void function<R(Args...)>::swap(function &other) noexcept {
-    std::swap(variant, other.variant);
-    std::swap(ptr, other.ptr);
+    auto tmp(std::move(*this));
+    *this = std::move(other);
+    other = std::move(tmp);
 
     this->reset_pointer();
     other.reset_pointer();
