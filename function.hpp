@@ -70,16 +70,6 @@ class function<R(Args...)> {
     std::variant<array_t, pointer_t> variant;
     concept *ptr = nullptr;
 
-    void reset_pointer() {
-        if (is_small()) {
-            if (ptr) {
-                ptr = reinterpret_cast<concept *>(std::get<array_t>(variant).data());
-            }
-        } else {
-            ptr = std::get<pointer_t>(variant).get();
-        }
-    }
-
     bool has_value() const {
         return ptr != nullptr;
     }
@@ -233,9 +223,6 @@ void function<R(Args...)>::swap(function &other) noexcept {
     auto tmp(std::move(*this));
     *this = std::move(other);
     other = std::move(tmp);
-
-    this->reset_pointer();
-    other.reset_pointer();
 }
 
 template<typename R, typename... Args>
