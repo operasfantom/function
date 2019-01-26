@@ -156,6 +156,8 @@ function<R(Args...)>::function(function &&other) noexcept : offset(other.offset)
     if (other.has_value()) {
         if (other.is_small()) {
             ptr = other.ptr->move(data.data());
+            other.ptr->~concept();
+            other.ptr = nullptr;
         } else {
             shared_ptr = std::move(other.shared_ptr);
             ptr = shared_ptr.get();
