@@ -6,7 +6,6 @@
 #include <vector>
 #include <iostream>
 #include <type_traits>
-#include <functional>
 
 template<typename T>
 class function;
@@ -17,7 +16,7 @@ class function<R(Args...)> {
     public:
         virtual ~concept() = default;
 
-        virtual R operator()(Args ...args)/* const */= 0;
+        virtual R operator()(Args &&...args)/* const */= 0;
 
         virtual concept *copy(std::byte *) = 0;
 
@@ -32,7 +31,7 @@ class function<R(Args...)> {
 
         explicit model(F &&f) : f(std::move(f)) {}
 
-        R operator()(Args ... args)/* const */override;
+        R operator()(Args &&... args)/* const */override;
 
         concept *copy(std::byte *destination) override;
 
@@ -63,7 +62,7 @@ class function<R(Args...)> {
 
     constexpr static size_t FIXED_SIZE = 32;
 
-    alignas(FIXED_SIZE * sizeof(std::byte)) std::array<std::byte, FIXED_SIZE> data;
+    mutable std::array<std::byte, FIXED_SIZE> data;
     size_t offset = 0;
 
     std::shared_ptr<concept> shared_ptr;
@@ -109,12 +108,12 @@ public:
 
     explicit operator bool() const noexcept;
 
-    R operator()(Args ... args) const;
+    R operator()(Args &&... args) const;
 };
 
 template<typename R, typename... Args>
 template<typename F>
-R function<R(Args...)>::model<F>::operator()(Args ... args) {
+R function<R(Args...)>::model<F>::operator()(Args &&... args) {
     return f(std::forward<Args>(args)...);
 }
 
@@ -157,8 +156,6 @@ function<R(Args...)>::function(function &&other) noexcept : offset(other.offset)
     if (other.has_value()) {
         if (other.is_small()) {
             ptr = other.ptr->move(data.data());
-            other.ptr->~concept();
-            other.ptr = nullptr;
         } else {
             shared_ptr = std::move(other.shared_ptr);
             ptr = shared_ptr.get();
@@ -221,10 +218,7 @@ function<R(Args...)>::operator bool() const noexcept {
 }
 
 template<typename R, typename... Args>
-R function<R(Args...)>::operator()(Args ... args) const {
-    if (!has_value()) {
-        throw std::bad_function_call();
-    }
+R function<R(Args...)>::operator()(Args &&... args) const {
     return ptr->operator()(std::forward<Args>(args)...);
 }
 
