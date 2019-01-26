@@ -6,6 +6,7 @@
 #include <vector>
 #include <iostream>
 #include <type_traits>
+#include <functional>
 
 template<typename T>
 class function;
@@ -62,8 +63,7 @@ class function<R(Args...)> {
 
     constexpr static size_t FIXED_SIZE = 32;
 
-    mutable std::array<std::byte, FIXED_SIZE> data;
-    size_t offset = 0;
+    alignas(FIXED_SIZE) mutable std::array<std::byte, FIXED_SIZE> data;
 
     std::shared_ptr<concept> shared_ptr;
     concept *ptr = nullptr;
@@ -71,7 +71,7 @@ class function<R(Args...)> {
     void reset_pointer() {
         if (is_small()) {
             if (ptr) {
-                ptr = reinterpret_cast<concept *>(data.data() + offset);
+                ptr = reinterpret_cast<concept *>(data.data());
             }
         } else {
             ptr = shared_ptr.get();
@@ -140,7 +140,7 @@ function<R(Args...)>::function(std::nullptr_t) noexcept {
 }
 
 template<typename R, typename... Args>
-function<R(Args...)>::function(function const &other) : offset(other.offset) {
+function<R(Args...)>::function(function const &other) {
     if (other.has_value()) {
         if (other.is_small()) {
             ptr = other.ptr->copy(data.data());
@@ -152,7 +152,7 @@ function<R(Args...)>::function(function const &other) : offset(other.offset) {
 }
 
 template<typename R, typename... Args>
-function<R(Args...)>::function(function &&other) noexcept : offset(other.offset) {
+function<R(Args...)>::function(function &&other) noexcept {
     if (other.has_value()) {
         if (other.is_small()) {
             ptr = other.ptr->move(data.data());
@@ -169,7 +169,7 @@ function<R(Args...)>::function(F f) {
     using model_t = model<F>;
     if (sizeof(std::decay_t<F>) * 2 <= FIXED_SIZE) {
         ptr = ::new(reinterpret_cast<model_t *>(data.data())) model_t(std::move(f));
-        offset = static_cast<size_t>(std::distance(data.data(), reinterpret_cast<std::byte *>(ptr)));
+        static_cast<size_t>(std::distance(data.data(), reinterpret_cast<std::byte *>(ptr)));
     } else {
         shared_ptr = std::make_shared<model_t>(std::move(f));
         ptr = shared_ptr.get();
@@ -204,7 +204,6 @@ function<R(Args...)> &function<R(Args...)>::operator=(function &&other) noexcept
 template<typename R, typename... Args>
 void function<R(Args...)>::swap(function &other) noexcept {
     std::swap(data, other.data);
-    std::swap(offset, other.offset);
     std::swap(shared_ptr, other.shared_ptr);
     std::swap(ptr, other.ptr);
 
@@ -219,6 +218,9 @@ function<R(Args...)>::operator bool() const noexcept {
 
 template<typename R, typename... Args>
 R function<R(Args...)>::operator()(Args ... args) const {
+    if (!has_value()) {
+        throw std::bad_function_call();
+    }
     return ptr->operator()(std::forward<Args>(args)...);
 }
 
