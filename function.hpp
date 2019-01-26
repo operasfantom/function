@@ -16,7 +16,7 @@ class function<R(Args...)> {
     public:
         virtual ~concept() = default;
 
-        virtual R operator()(Args &&...args)/* const */= 0;
+        virtual R operator()(Args ...args)/* const */= 0;
 
         virtual concept *copy(std::byte *) = 0;
 
@@ -31,7 +31,7 @@ class function<R(Args...)> {
 
         explicit model(F &&f) : f(std::move(f)) {}
 
-        R operator()(Args &&... args)/* const */override;
+        R operator()(Args ... args)/* const */override;
 
         concept *copy(std::byte *destination) override;
 
@@ -108,12 +108,12 @@ public:
 
     explicit operator bool() const noexcept;
 
-    R operator()(Args &&... args) const;
+    R operator()(Args ... args) const;
 };
 
 template<typename R, typename... Args>
 template<typename F>
-R function<R(Args...)>::model<F>::operator()(Args &&... args) {
+R function<R(Args...)>::model<F>::operator()(Args ... args) {
     return f(std::forward<Args>(args)...);
 }
 
@@ -218,7 +218,7 @@ function<R(Args...)>::operator bool() const noexcept {
 }
 
 template<typename R, typename... Args>
-R function<R(Args...)>::operator()(Args &&... args) const {
+R function<R(Args...)>::operator()(Args ... args) const {
     return ptr->operator()(std::forward<Args>(args)...);
 }
 
